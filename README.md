@@ -11,6 +11,7 @@ Already have a working OpenClaw setup? This script merges Clawdboss improvements
 | **Workspace files** | Injects missing sections into AGENTS.md, SOUL.md, etc. — never overwrites existing content |
 | **openclaw.json** | Adds missing config keys, fixes defaults (maxConcurrent, blockStreamingCoalesce) — preserves your values |
 | **Security** | Prompt injection defense, anti-loop rules, WAL Protocol, External Content Security |
+| **Secret migration** | Detects plaintext API keys in openclaw.json and offers to move them to `.env` with `${VAR}` references |
 | **Skills** | Offers to install missing Clawdboss skills (GitHub, Humanizer, Self-Improving, Find Skills, Marketing Skills) |
 | **Extensions** | Installs/updates memory-hybrid (SQLite + LanceDB two-tier memory) |
 | **Specialist agents** | Patches workspace files for comms/research/security agents if they exist |

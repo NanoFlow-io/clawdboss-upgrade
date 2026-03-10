@@ -167,7 +167,8 @@ print('$OPENCLAW_DIR/workspace')
       "$(dirname "$SCRIPT_DIR")/clawdboss" \
       "$HOME/clawdboss" \
       "/opt/clawdboss" \
-      "$SCRIPT_DIR/../clawdboss"; do
+      "$SCRIPT_DIR/../clawdboss" \
+      "$SCRIPT_DIR/.clawdboss-ref"; do
       if [[ -f "$candidate/setup.sh" && -d "$candidate/templates" ]]; then
         CLAWDBOSS_DIR="$(cd "$candidate" && pwd)"
         break
@@ -1114,6 +1115,212 @@ PYEOF
 }
 
 # ============================================================
+# Migrate plaintext secrets to .env
+# ============================================================
+
+migrate_secrets() {
+  divider "Secret Migration"
+
+  info "Scanning openclaw.json for plaintext API keys..."
+
+  # Use Python to find any string value that looks like an API key but isn't a ${VAR} reference
+  local SECRETS_FOUND
+  SECRETS_FOUND=$(CB_CONFIG="$CONFIG_FILE" CB_ENV_FILE="$ENV_FILE" python3 << 'PYEOF'
+import json, os, re, sys
+
+config_path = os.environ['CB_CONFIG']
+env_path = os.environ.get('CB_ENV_FILE', '')
+
+with open(config_path) as f:
+    config = json.load(f)
+
+# Patterns that look like API keys/secrets (but NOT ${VAR} references)
+secret_patterns = [
+    (r'^sk-[a-zA-Z0-9_-]{20,}$', 'OpenAI/Anthropic API key'),
+    (r'^sk-ant-[a-zA-Z0-9_-]{20,}$', 'Anthropic API key'),
+    (r'^sk-proj-[a-zA-Z0-9_-]{20,}$', 'OpenAI project key'),
+    (r'^xai-[a-zA-Z0-9_-]{20,}$', 'xAI API key'),
+    (r'^AIza[a-zA-Z0-9_-]{30,}$', 'Google API key'),
+    (r'^[a-f0-9]{32,}$', 'Hex token/key'),
+    (r'^BSA[a-zA-Z0-9_-]{20,}$', 'Brave Search key'),
+    (r'^[A-Za-z0-9]{20,}\.[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{20,}$', 'Discord bot token'),
+    (r'^MTI\d{17}\.[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{20,}$', 'Discord bot token'),
+    (r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$', 'UUID token'),
+]
+
+found_secrets = []  # list of (json_path, value_preview, suggested_env_var, description)
+
+def scan_dict(obj, path=""):
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            scan_dict(v, f"{path}.{k}" if path else k)
+    elif isinstance(obj, list):
+        for i, v in enumerate(obj):
+            scan_dict(v, f"{path}[{i}]")
+    elif isinstance(obj, str):
+        # Skip ${VAR} references — they're already safe
+        if obj.startswith('${') and obj.endswith('}'):
+            return
+        # Skip URLs, file paths, common non-secret strings
+        if obj.startswith(('http://', 'https://', '/', './', '~/', 'localhost')) or len(obj) < 15:
+            return
+        # Skip model names, modes, known config values
+        known_values = {'openai-completions', 'openai-responses', 'openai-chat', 'safeguard',
+                       'loopback', 'local', 'interrupt', 'collect', 'npm', 'auto', 'merge',
+                       'group-mentions', 'text-embedding-3-small', 'gpt-image-1', 'gpt-4o-mini'}
+        if obj.lower() in known_values:
+            return
+        for pattern, desc in secret_patterns:
+            if re.match(pattern, obj):
+                # Generate suggested env var name from path
+                parts = path.replace('[', '.').replace(']', '').split('.')
+                # Build a readable env var name
+                relevant = [p for p in parts if p and not p.isdigit()]
+                if 'apiKey' in relevant or 'api_key' in relevant:
+                    # Use the parent context
+                    context = [p for p in relevant if p not in ('apiKey', 'api_key', 'config', 'entries', 'providers')]
+                    env_name = '_'.join(context).upper() + '_API_KEY'
+                elif 'token' in [p.lower() for p in relevant]:
+                    context = [p for p in relevant if p.lower() != 'token']
+                    env_name = '_'.join(context).upper() + '_TOKEN'
+                else:
+                    env_name = '_'.join(relevant[-3:]).upper() + '_KEY'
+                # Clean up the env var name
+                env_name = re.sub(r'[^A-Z0-9_]', '_', env_name)
+                env_name = re.sub(r'_+', '_', env_name).strip('_')
+                # Preview: show first 6 and last 4 chars
+                preview = obj[:6] + '...' + obj[-4:] if len(obj) > 14 else obj[:6] + '...'
+                found_secrets.append((path, preview, env_name, desc, obj))
+                break
+
+scan_dict(config)
+
+if not found_secrets:
+    print("__NONE__")
+else:
+    for path, preview, env_name, desc, full_val in found_secrets:
+        # Output format: path||preview||env_name||description||full_value
+        print(f"{path}||{preview}||{env_name}||{desc}||{full_val}")
+PYEOF
+  )
+
+  if [[ "$SECRETS_FOUND" == "__NONE__" || -z "$SECRETS_FOUND" ]]; then
+    success "No plaintext secrets found — all keys use \${VAR} references ✨"
+    echo ""
+    return
+  fi
+
+  # Count secrets
+  local secret_count
+  secret_count=$(echo "$SECRETS_FOUND" | wc -l)
+  warn "Found $secret_count plaintext secret(s) in openclaw.json!"
+  echo ""
+
+  # Show what was found
+  while IFS='||' read -r path preview env_name desc full_val; do
+    echo -e "  ${RED}🔑${NC} ${BOLD}$desc${NC}"
+    echo -e "     Path: $path"
+    echo -e "     Value: $preview"
+    echo -e "     Suggested env var: \${$env_name}"
+    echo ""
+  done <<< "$SECRETS_FOUND"
+
+  if [[ "$DRY_RUN" = true ]]; then
+    dry "Would offer to migrate these secrets to $ENV_FILE"
+    echo ""
+    return
+  fi
+
+  # Ask user
+  if [[ "$FORCE" = false ]]; then
+    echo -en "${CYAN}?${NC}  Migrate these secrets to .env and replace with \${VAR} references? [Y/n]: "
+    read -r answer
+    answer="${answer:-Y}"
+  else
+    answer="Y"
+  fi
+
+  if [[ ! "$answer" =~ ^[Yy] ]]; then
+    info "Skipping secret migration"
+    echo ""
+    return
+  fi
+
+  # Create .env if it doesn't exist
+  if [[ ! -f "$ENV_FILE" ]]; then
+    touch "$ENV_FILE"
+    chmod 600 "$ENV_FILE"
+    echo "# OpenClaw Environment — generated by clawdboss-upgrade $(date +%Y-%m-%d)" > "$ENV_FILE"
+    echo "# SECURITY: This file contains secrets. Never commit to git." >> "$ENV_FILE"
+    changed "Created .env file"
+  fi
+
+  # Migrate each secret
+  local migrated=0
+  while IFS='||' read -r path preview env_name desc full_val; do
+    # Check if this env var already exists in .env
+    if grep -q "^${env_name}=" "$ENV_FILE" 2>/dev/null; then
+      # Var exists — check if it has the same value
+      existing_val=$(grep "^${env_name}=" "$ENV_FILE" | cut -d= -f2-)
+      if [[ "$existing_val" == "$full_val" ]]; then
+        info "$env_name already in .env with same value"
+      else
+        # Append with a numbered suffix
+        env_name="${env_name}_2"
+        echo "" >> "$ENV_FILE"
+        echo "# $desc (migrated from $path)" >> "$ENV_FILE"
+        echo "${env_name}=${full_val}" >> "$ENV_FILE"
+        info "Added as $env_name (original name already taken)"
+      fi
+    else
+      echo "" >> "$ENV_FILE"
+      echo "# $desc (migrated from $path)" >> "$ENV_FILE"
+      echo "${env_name}=${full_val}" >> "$ENV_FILE"
+    fi
+
+    # Replace in config using Python (handles nested paths)
+    CB_CONFIG="$CONFIG_FILE" CB_PATH="$path" CB_VAR="\${$env_name}" python3 << 'PYEOF2'
+import json, os, re
+
+config_path = os.environ['CB_CONFIG']
+json_path = os.environ['CB_PATH']
+new_value = os.environ['CB_VAR']
+
+with open(config_path) as f:
+    config = json.load(f)
+
+# Navigate the path and set the value
+parts = re.split(r'\.|\[(\d+)\]', json_path)
+parts = [p for p in parts if p is not None and p != '']
+
+obj = config
+for i, part in enumerate(parts[:-1]):
+    if part.isdigit():
+        obj = obj[int(part)]
+    else:
+        obj = obj[part]
+
+last = parts[-1]
+if last.isdigit():
+    obj[int(last)] = new_value
+else:
+    obj[last] = new_value
+
+with open(config_path, 'w') as f:
+    json.dump(config, f, indent=2)
+PYEOF2
+
+    migrated=$((migrated + 1))
+    changed "Migrated $desc → \${$env_name}"
+  done <<< "$SECRETS_FOUND"
+
+  # Ensure .env has proper permissions
+  chmod 600 "$ENV_FILE"
+  success "Migrated $migrated secret(s) to .env with 600 permissions"
+  echo ""
+}
+
+# ============================================================
 # Update .env file
 # ============================================================
 
@@ -1121,7 +1328,9 @@ upgrade_env() {
   divider "Environment (.env)"
 
   if [[ ! -f "$ENV_FILE" ]]; then
-    warn "No .env file found — skipping environment upgrade"
+    warn "No .env file found at $ENV_FILE"
+    info "If you have API keys in openclaw.json, run the secret migration step to create one."
+    echo ""
     return
   fi
 
@@ -1375,6 +1584,7 @@ main() {
 
   detect_install
   create_backup
+  migrate_secrets
   patch_workspace_files "$WORKSPACE_DIR" "Main"
   upgrade_config
   upgrade_env
