@@ -1455,6 +1455,286 @@ upgrade_skills() {
 }
 
 # ============================================================
+# Install/update ecosystem tools (binary/pip/npm)
+# ============================================================
+
+upgrade_tools() {
+  divider "Ecosystem Tools"
+
+  info "Checking for missing tools..."
+  echo ""
+
+  # ---- OCTAVE ----
+  local OCTAVE_VENV="$HOME/.octave-venv"
+  if [[ -f "$OCTAVE_VENV/bin/octave-mcp-server" ]]; then
+    skip "OCTAVE (already installed)"
+  else
+    offer_install "OCTAVE — Token compression (3-20x reduction) for multi-agent handoffs" \
+      && install_tool_octave
+  fi
+
+  # ---- Graphthulhu ----
+  if command -v graphthulhu &>/dev/null || [[ -f "$HOME/.local/bin/graphthulhu" ]]; then
+    skip "Graphthulhu (already installed)"
+  else
+    offer_install "Graphthulhu — Knowledge graph memory (entities, relationships)" \
+      && install_tool_graphthulhu
+  fi
+
+  # ---- ApiTap ----
+  if npm list -g @apitap/core &>/dev/null 2>&1; then
+    skip "ApiTap (already installed)"
+  else
+    offer_install "ApiTap — API traffic interception and discovery" \
+      && install_tool_apitap
+  fi
+
+  # ---- Scrapling ----
+  if python3 -c "import scrapling" &>/dev/null 2>&1; then
+    skip "Scrapling (already installed)"
+  else
+    offer_install "Scrapling — Anti-bot web scraping with adaptive selectors" \
+      && install_tool_scrapling
+  fi
+
+  # ---- Playwright MCP (clawhub skill) ----
+  local skills_dir="$WORKSPACE_DIR/skills"
+  if [[ -d "$skills_dir/playwright-mcp" ]] || [[ -d "$skills_dir/playwright_mcp" ]]; then
+    skip "Playwright MCP (already installed)"
+  else
+    offer_install "Playwright MCP — Full browser automation" \
+      && install_tool_playwright
+  fi
+
+  # ---- Clawmetry ----
+  if python3 -c "import clawmetry" &>/dev/null 2>&1 || command -v clawmetry &>/dev/null; then
+    skip "Clawmetry (already installed)"
+  else
+    offer_install "Clawmetry — Real-time observability dashboard (token costs, sessions)" \
+      && install_tool_clawmetry
+  fi
+
+  # ---- ClawSec ----
+  if [[ -d "$OPENCLAW_DIR/skills/clawsec-suite" ]] || [[ -d "$WORKSPACE_DIR/skills/clawsec-suite" ]]; then
+    skip "ClawSec (already installed)"
+  else
+    offer_install "ClawSec — File integrity, security advisories, malicious skill detection" \
+      && install_tool_clawsec
+  fi
+
+  # ---- Healthcheck ----
+  local HC_PATH
+  HC_PATH="$(npm root -g 2>/dev/null)/openclaw/skills/healthcheck"
+  if [[ -d "$HC_PATH" ]]; then
+    skip "Healthcheck (built-in with OpenClaw)"
+  else
+    info "Healthcheck skill not found — it should be included with OpenClaw."
+  fi
+
+  echo ""
+}
+
+# Helper: offer to install a tool
+offer_install() {
+  local desc="$1"
+  if [[ "$DRY_RUN" = true ]]; then
+    dry "Would offer to install: $desc"
+    return 1
+  fi
+  if [[ "$FORCE" = true ]]; then
+    return 0
+  fi
+  echo -en "${CYAN}?${NC}  Install $desc? [Y/n]: "
+  read -r answer
+  answer="${answer:-Y}"
+  [[ "$answer" =~ ^[Yy] ]]
+}
+
+# Helper: register MCP server in mcporter config
+register_mcp() {
+  local name="$1"
+  local command="$2"
+  local MCPORTER_CONFIG="$WORKSPACE_DIR/config/mcporter.json"
+  mkdir -p "$(dirname "$MCPORTER_CONFIG")"
+
+  if [ ! -f "$MCPORTER_CONFIG" ]; then
+    echo '{"mcpServers":{},"imports":[]}' > "$MCPORTER_CONFIG"
+  fi
+
+  MCP_NAME="$name" MCP_COMMAND="$command" MCP_CONFIG_PATH="$MCPORTER_CONFIG" \
+  python3 -c '
+import json, os
+config_path = os.environ["MCP_CONFIG_PATH"]
+name = os.environ["MCP_NAME"]
+command = os.environ["MCP_COMMAND"]
+with open(config_path) as f:
+    config = json.load(f)
+config.setdefault("mcpServers", {})[name] = {"command": command}
+with open(config_path, "w") as f:
+    json.dump(config, f, indent=2)
+' 2>/dev/null && success "$name registered in mcporter config" \
+  || warn "Could not register $name in mcporter — add manually"
+
+  # Also register for specialist agent workspaces
+  for ws in "$OPENCLAW_DIR"/workspace-*/config; do
+    if [ -d "$(dirname "$ws")" ]; then
+      mkdir -p "$ws"
+      local AGENT_MCP="$ws/mcporter.json"
+      if [ ! -f "$AGENT_MCP" ]; then
+        echo '{"mcpServers":{},"imports":[]}' > "$AGENT_MCP"
+      fi
+      MCP_NAME="$name" MCP_COMMAND="$command" MCP_CONFIG_PATH="$AGENT_MCP" \
+      python3 -c '
+import json, os
+config_path = os.environ["MCP_CONFIG_PATH"]
+name = os.environ["MCP_NAME"]
+command = os.environ["MCP_COMMAND"]
+with open(config_path) as f:
+    config = json.load(f)
+config.setdefault("mcpServers", {})[name] = {"command": command}
+with open(config_path, "w") as f:
+    json.dump(config, f, indent=2)
+' 2>/dev/null
+    fi
+  done
+}
+
+# ---- Tool installers ----
+
+install_tool_octave() {
+  local OCTAVE_VENV="$HOME/.octave-venv"
+  if command -v uv &>/dev/null; then
+    info "Installing OCTAVE via uv..."
+    uv venv --clear "$OCTAVE_VENV" 2>/dev/null
+    source "$OCTAVE_VENV/bin/activate" 2>/dev/null || true
+    uv pip install octave-mcp 2>&1 | tail -1
+  elif python3 -m venv --help &>/dev/null 2>&1; then
+    if ! python3 -c "import ensurepip" &>/dev/null; then
+      info "Installing python3-venv..."
+      sudo apt-get install -y python3-venv 2>/dev/null \
+        || { warn "Could not install python3-venv. Run: sudo apt install python3-venv"; return; }
+    fi
+    info "Installing OCTAVE via python3 venv..."
+    python3 -m venv "$OCTAVE_VENV"
+    "$OCTAVE_VENV/bin/pip" install --quiet octave-mcp 2>&1
+  else
+    warn "Cannot install OCTAVE — neither uv nor python3-venv found."
+    return
+  fi
+
+  if [ -f "$OCTAVE_VENV/bin/octave-mcp-server" ]; then
+    register_mcp "octave" "$OCTAVE_VENV/bin/octave-mcp-server"
+    changed "OCTAVE installed: $OCTAVE_VENV/bin/octave-mcp-server"
+  else
+    warn "OCTAVE installation failed — binary not found"
+  fi
+}
+
+install_tool_graphthulhu() {
+  local VAULT_DIR="$OPENCLAW_DIR/vault"
+  mkdir -p "$VAULT_DIR"
+
+  if command -v go &>/dev/null; then
+    info "Installing Graphthulhu via go..."
+    go install github.com/skridlevsky/graphthulhu@latest 2>&1 | tail -3
+  fi
+
+  if ! command -v graphthulhu &>/dev/null; then
+    local ARCH OS BIN_DIR
+    ARCH=$(uname -m)
+    case "$ARCH" in x86_64) ARCH="amd64" ;; aarch64) ARCH="arm64" ;; esac
+    OS=$(uname -s | tr '[:upper:]' '[:lower:]')
+    BIN_DIR="$HOME/.local/bin"
+    mkdir -p "$BIN_DIR"
+
+    info "Downloading Graphthulhu binary..."
+    local RELEASE_URL="https://github.com/skridlevsky/graphthulhu/releases/download/v0.4.0/graphthulhu_0.4.0_${OS}_${ARCH}.tar.gz"
+    if curl -fsSL -o /tmp/graphthulhu.tar.gz "$RELEASE_URL" 2>/dev/null; then
+      (cd /tmp && tar xzf graphthulhu.tar.gz && mv graphthulhu "$BIN_DIR/" && chmod +x "$BIN_DIR/graphthulhu")
+      rm -f /tmp/graphthulhu.tar.gz
+    else
+      warn "Could not download Graphthulhu. Install manually from: https://github.com/skridlevsky/graphthulhu/releases"
+      return
+    fi
+  fi
+
+  register_mcp "graphthulhu" "graphthulhu serve --backend obsidian --vault $VAULT_DIR"
+  changed "Graphthulhu installed with Obsidian vault: $VAULT_DIR"
+}
+
+install_tool_apitap() {
+  if npm install -g @apitap/core 2>&1 | tail -3; then
+    register_mcp "apitap" "apitap-mcp"
+    changed "ApiTap installed (npm global: @apitap/core)"
+  else
+    warn "Could not install ApiTap. Install manually: npm install -g @apitap/core"
+  fi
+}
+
+install_tool_scrapling() {
+  local PIP_CMD
+  PIP_CMD="$(command -v pip3 || command -v pip)"
+  if [ -n "$PIP_CMD" ]; then
+    info "Installing Scrapling and dependencies..."
+    "$PIP_CMD" install --break-system-packages scrapling curl_cffi browserforge 2>/dev/null \
+      || "$PIP_CMD" install --user scrapling curl_cffi browserforge 2>/dev/null \
+      || { warn "Could not install Scrapling. Install manually: pip install scrapling curl_cffi browserforge"; return; }
+
+    "$PIP_CMD" install --break-system-packages playwright 2>/dev/null \
+      || "$PIP_CMD" install --user playwright 2>/dev/null || true
+    python3 -m playwright install chromium 2>/dev/null || true
+    if command -v apt-get &>/dev/null; then
+      python3 -m playwright install-deps chromium 2>/dev/null || true
+    fi
+    changed "Scrapling installed with dependencies"
+  else
+    warn "pip not found. Install manually: pip install scrapling curl_cffi browserforge"
+  fi
+}
+
+install_tool_playwright() {
+  if npx --yes clawhub@latest --workdir "$WORKSPACE_DIR" install playwright-mcp 2>/dev/null; then
+    changed "Playwright MCP skill installed"
+  else
+    warn "Could not install Playwright MCP. Install manually: clawhub install playwright-mcp"
+  fi
+}
+
+install_tool_clawmetry() {
+  local PIP_CMD
+  PIP_CMD="$(command -v pip3 || command -v pip)"
+  if [ -n "$PIP_CMD" ]; then
+    info "Installing Clawmetry..."
+    "$PIP_CMD" install --break-system-packages clawmetry 2>/dev/null \
+      || "$PIP_CMD" install --user clawmetry 2>/dev/null \
+      || { warn "Could not install Clawmetry. Install manually: pip install clawmetry"; return; }
+    changed "Clawmetry installed (run with: clawmetry or python3 -m clawmetry)"
+  else
+    warn "pip not found. Install manually: pip install clawmetry"
+  fi
+}
+
+install_tool_clawsec() {
+  local CLAWSEC_DIR="$OPENCLAW_DIR/skills"
+  mkdir -p "$CLAWSEC_DIR"
+
+  info "Cloning ClawSec suite..."
+  if git clone --depth 1 https://github.com/prompt-security/clawsec.git /tmp/clawsec-install 2>/dev/null; then
+    # ClawSec has multiple sub-skills — install them all
+    for skill_dir in /tmp/clawsec-install/skills/*/; do
+      local skill_name=$(basename "$skill_dir")
+      if [[ ! -d "$CLAWSEC_DIR/$skill_name" ]]; then
+        cp -r "$skill_dir" "$CLAWSEC_DIR/$skill_name"
+      fi
+    done
+    rm -rf /tmp/clawsec-install
+    changed "ClawSec suite installed to $CLAWSEC_DIR"
+  else
+    warn "Could not clone ClawSec. Install manually from: https://github.com/prompt-security/clawsec"
+  fi
+}
+
+# ============================================================
 # Install/update memory-hybrid extension
 # ============================================================
 
@@ -1621,6 +1901,7 @@ main() {
   upgrade_config
   upgrade_env
   upgrade_skills
+  upgrade_tools
   upgrade_extensions
   upgrade_specialists
   show_summary
