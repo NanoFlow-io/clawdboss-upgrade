@@ -1052,29 +1052,61 @@ if 'mode' not in gw:
     if not dry_run:
         gw['mode'] = "local"
 
-# --- plugins.slots.memory ---
+# --- plugins.slots.memory (only if extension is actually installed) ---
+# Check if the memory-hybrid extension files exist before adding config
+import subprocess, glob
+npm_root = subprocess.run(['npm', 'root', '-g'], capture_output=True, text=True).stdout.strip()
+ext_candidates = [
+    os.path.join(npm_root, 'openclaw', 'extensions', 'memory-hybrid', 'index.ts'),
+    os.path.join(npm_root, 'openclaw', 'extensions', 'memory-hybrid', 'index.js'),
+]
+memory_hybrid_installed = any(os.path.isfile(p) for p in ext_candidates)
+
 plugins = config.setdefault('plugins', {})
 slots = plugins.setdefault('slots', {})
-if 'memory' not in slots:
-    changes.append("plugins.slots.memory: set to memory-hybrid")
-    if not dry_run:
-        slots['memory'] = "memory-hybrid"
-
 entries = plugins.setdefault('entries', {})
-if 'memory-hybrid' not in entries:
-    changes.append("plugins.entries.memory-hybrid: added with default config")
-    if not dry_run:
-        entries['memory-hybrid'] = {
-            "enabled": True,
-            "config": {
-                "embedding": {
-                    "apiKey": "${EMBEDDING_API_KEY}",
-                    "model": "text-embedding-3-small"
-                },
-                "autoCapture": False,
-                "autoRecall": True
+
+if memory_hybrid_installed:
+    if 'memory' not in slots:
+        changes.append("plugins.slots.memory: set to memory-hybrid")
+        if not dry_run:
+            slots['memory'] = "memory-hybrid"
+
+    if 'memory-hybrid' not in entries:
+        changes.append("plugins.entries.memory-hybrid: added with default config")
+        if not dry_run:
+            entries['memory-hybrid'] = {
+                "enabled": True,
+                "config": {
+                    "embedding": {
+                        "apiKey": "${EMBEDDING_API_KEY}",
+                        "model": "text-embedding-3-small"
+                    },
+                    "autoCapture": False,
+                    "autoRecall": True
+                }
             }
-        }
+else:
+    # Remove stale memory-hybrid config if the plugin isn't installed
+    removed_stale = False
+    if slots.get('memory') == 'memory-hybrid':
+        changes.append("plugins.slots.memory: removed (memory-hybrid not installed)")
+        if not dry_run:
+            del slots['memory']
+        removed_stale = True
+    if 'memory-hybrid' in entries:
+        changes.append("plugins.entries.memory-hybrid: removed (not installed)")
+        if not dry_run:
+            del entries['memory-hybrid']
+        removed_stale = True
+    allow_list = plugins.get('allow', [])
+    if 'memory-hybrid' in allow_list:
+        changes.append("plugins.allow: removed memory-hybrid (not installed)")
+        if not dry_run:
+            plugins['allow'] = [p for p in allow_list if p != 'memory-hybrid']
+        removed_stale = True
+    if not removed_stale:
+        pass  # nothing to do
 
 # --- skills.install.nodeManager ---
 skills = config.setdefault('skills', {})
