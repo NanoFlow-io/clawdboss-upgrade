@@ -1,28 +1,28 @@
-# Clawdboss Upgrade
+# 🦞 Clawdboss Upgrade
 
-Non-destructive upgrade tool for existing [OpenClaw](https://openclaw.dev) installations. Companion to [clawdboss](https://github.com/NanoFlow-io/clawdboss).
+**Non-destructive upgrade tool for existing [OpenClaw](https://openclaw.dev) installations.**
 
-## What It Does
+Already have a working OpenClaw setup? This script merges Clawdboss improvements into your existing install — without destroying your customizations. Companion to [Clawdboss](https://github.com/NanoFlow-io/clawdboss).
 
-If you already have a working OpenClaw setup (from clawdboss or manual install), this script merges improvements **without destroying your customizations**.
+## What Gets Upgraded
 
-| Area | What Gets Upgraded |
+| Area | What Changes |
 |---|---|
 | **Workspace files** | Injects missing sections into AGENTS.md, SOUL.md, etc. — never overwrites existing content |
 | **openclaw.json** | Adds missing config keys, fixes defaults (maxConcurrent, blockStreamingCoalesce) — preserves your values |
 | **Security** | Prompt injection defense, anti-loop rules, WAL Protocol, External Content Security |
-| **Skills** | Offers to install missing clawdboss skills (github, humanizer, self-improving, find-skills, marketing-skills) |
+| **Skills** | Offers to install missing Clawdboss skills (GitHub, Humanizer, Self-Improving, Find Skills, Marketing Skills) |
 | **Extensions** | Installs/updates memory-hybrid (SQLite + LanceDB two-tier memory) |
 | **Specialist agents** | Patches workspace files for comms/research/security agents if they exist |
 | **.env** | Adds missing env vars without overwriting existing ones |
 
 ## Key Principles
 
-- **Never overwrites user content** — merge, don't replace
-- **Always backs up first** — timestamped backup of your entire `~/.openclaw` before any changes
-- **Dry-run mode** — preview exactly what would change
-- **Idempotent** — safe to run as many times as you want
-- **No onboarding questions** — this isn't a fresh setup, no "what's your name" prompts
+- 🔒 **Never overwrites user content** — merge, don't replace
+- 💾 **Always backs up first** — timestamped backup of your entire `~/.openclaw` before any changes
+- 👀 **Dry-run mode** — preview exactly what would change
+- 🔄 **Idempotent** — safe to run as many times as you want
+- 🚫 **No onboarding questions** — this isn't a fresh setup, no "what's your name" prompts
 
 ## Quick Start
 
@@ -72,7 +72,7 @@ Options:
 - Node.js + npm (for skills and extensions)
 - `git` (to clone clawdboss templates if not found locally)
 
-The script expects the [clawdboss](https://github.com/NanoFlow-io/clawdboss) repo to be cloned alongside it (e.g., `~/clawdboss` and `~/clawdboss-upgrade`). If not found, it will attempt to clone it automatically.
+The script expects the [Clawdboss](https://github.com/NanoFlow-io/clawdboss) repo to be cloned alongside it (e.g., `~/clawdboss` and `~/clawdboss-upgrade`). If not found, it will attempt to clone it automatically.
 
 ## How Section Merging Works
 
@@ -112,9 +112,29 @@ backups/upgrade-20260310-143022/
 
 To rollback: `cp -r ~/.openclaw/backups/upgrade-YYYYMMDD-HHMMSS/* ~/.openclaw/`
 
-## Relationship to Clawdboss
+## Ecosystem Tools & Skills
 
-| | clawdboss | clawdboss-upgrade |
+Clawdboss Upgrade can install these optional tools and skills if they're missing from your setup:
+
+| Tool | Purpose | Link |
+|------|---------|------|
+| **OCTAVE** | Token compression for multi-agent handoffs (3-20x reduction) | [GitHub](https://github.com/elevanaltd/octave-mcp) · [PyPI](https://pypi.org/project/octave-mcp/) |
+| **Graphthulhu** | Knowledge graph memory with Obsidian/Logseq backends | [GitHub](https://github.com/skridlevsky/graphthulhu) |
+| **ApiTap** | Intercepts web traffic to teach agents how APIs work | [GitHub](https://github.com/n1byn1kt/apitap) · [npm](https://www.npmjs.com/package/@apitap/core) |
+| **Scrapling** | Anti-bot web scraping with adaptive selectors | [GitHub](https://github.com/D4Vinci/Scrapling) · [PyPI](https://pypi.org/project/scrapling/) |
+| **GitHub** | Issues, PRs, CI/CD via the `gh` CLI | [CLI](https://cli.github.com) · [ClawHub](https://clawhub.ai) |
+| **Playwright MCP** | Full browser automation (navigate, click, fill, screenshot) | [ClawHub](https://clawhub.ai/Spiceman161/playwright-mcp) |
+| **Humanizer** | Detects and removes AI writing patterns (24 patterns, 500+ terms) | [ClawHub](https://clawhub.ai/biostartechnology/humanizer) |
+| **Self-Improving Agent** | Captures errors and corrections for continuous learning | [ClawHub](https://clawhub.ai/pskoett/self-improving-agent) |
+| **Find Skills** | Discover and install new capabilities from ClawHub on-the-fly | [ClawHub](https://clawhub.ai) |
+| **Marketing Skills** | 15+ reference skills for copywriting, CRO, SEO, email, paid ads | [ClawHub](https://clawhub.ai/jchopard69/marketing-skills) |
+| **Healthcheck** | Host security audits: firewall, SSH, system updates, exposure | Built into OpenClaw |
+| **Clawmetry** | Real-time observability dashboard (token costs, sessions, flow) | [GitHub](https://github.com/vivekchand/clawmetry) · [Website](https://clawmetry.com) |
+| **ClawSec** | File integrity monitoring, security advisory feed, malicious skill detection | [GitHub](https://github.com/prompt-security/clawsec) · [Website](https://prompt.security/clawsec) |
+
+## Clawdboss vs Clawdboss Upgrade
+
+| | Clawdboss | Clawdboss Upgrade |
 |---|---|---|
 | **Purpose** | Fresh install from scratch | Upgrade existing install |
 | **Asks questions** | Yes (name, keys, personality) | No (detects everything) |
@@ -129,4 +149,4 @@ MIT
 
 ## Credits
 
-Built by the team at [NanoFlow.io](https://nanoflow.io) • Part of the Clawdboss ecosystem.
+Built by [NanoFlow.io](https://nanoflow.io) • Part of the [Clawdboss](https://github.com/NanoFlow-io/clawdboss) ecosystem
