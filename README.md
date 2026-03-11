@@ -15,6 +15,7 @@ Already have a working OpenClaw setup? This script merges Clawdboss improvements
 | **Skills** | Offers to install missing Clawdboss skills (GitHub, Humanizer, Self-Improving, Find Skills, Marketing Skills) |
 | **Extensions** | Installs/updates memory-hybrid (SQLite + LanceDB two-tier memory) |
 | **Specialist agents** | Patches workspace files for comms/research/security agents if they exist |
+| **Telegram** | Offers to add Telegram as a messaging channel (non-destructive — won't add if not wanted) |
 | **.env** | Adds missing env vars without overwriting existing ones |
 
 ## Key Principles

@@ -984,6 +984,25 @@ if discord_cfg and discord_cfg.get('maxLinesPerMessage', 0) > 100:
     if not dry_run:
         discord_cfg['maxLinesPerMessage'] = 40
 
+# --- Telegram: ensure good defaults if already configured ---
+telegram_cfg = config.get('channels', {}).get('telegram', {})
+if telegram_cfg:
+    tg_changed = False
+    if 'streamMode' not in telegram_cfg:
+        telegram_cfg['streamMode'] = 'partial'
+        tg_changed = True
+    if 'replyToMode' not in telegram_cfg:
+        telegram_cfg['replyToMode'] = 'first'
+        tg_changed = True
+    if 'dmPolicy' not in telegram_cfg:
+        telegram_cfg['dmPolicy'] = 'allowlist'
+        tg_changed = True
+    if telegram_cfg.get('groups') is None:
+        telegram_cfg['groups'] = {"*": {"requireMention": True}}
+        tg_changed = True
+    if tg_changed:
+        changes.append("channels.telegram: ensured good defaults (streamMode, replyToMode, dmPolicy, groups)")
+
 # --- ackReactionScope ---
 messages = config.setdefault('messages', {})
 if 'ackReactionScope' not in messages:
@@ -1397,6 +1416,109 @@ upgrade_env() {
     skip ".env (all expected vars present)"
   fi
 
+  echo ""
+}
+
+# ============================================================
+# Offer Telegram setup (non-destructive)
+# ============================================================
+
+offer_telegram() {
+  divider "Telegram Integration"
+
+  # Check if Telegram is already configured
+  local HAS_TELEGRAM
+  HAS_TELEGRAM=$(python3 -c "
+import json, sys
+with open(sys.argv[1]) as f:
+    config = json.load(f)
+tg = config.get('channels', {}).get('telegram', {})
+print('yes' if tg.get('enabled') or tg.get('botToken') else 'no')
+" "$CONFIG_FILE" 2>/dev/null || echo "no")
+
+  if [[ "$HAS_TELEGRAM" == "yes" ]]; then
+    success "Telegram already configured — defaults ensured by config upgrade step"
+    echo ""
+    return
+  fi
+
+  if [[ "$DRY_RUN" = true ]]; then
+    dry "Would offer to add Telegram integration"
+    echo ""
+    return
+  fi
+
+  echo -en "${CYAN}?${NC}  Add Telegram as a messaging channel? [y/N]: "
+  read -r ADD_TG
+  ADD_TG="${ADD_TG:-N}"
+
+  if [[ ! "$ADD_TG" =~ ^[Yy] ]]; then
+    info "Skipping Telegram setup"
+    echo ""
+    return
+  fi
+
+  # Collect Telegram credentials
+  local TG_TOKEN TG_OWNER_ID
+
+  while true; do
+    echo -en "${CYAN}?${NC}  Telegram bot token (from @BotFather): "
+    read -rs TG_TOKEN
+    echo ""
+    if [[ "$TG_TOKEN" =~ ^[0-9]+:[A-Za-z0-9_-]{30,}$ ]]; then
+      break
+    else
+      error "Invalid Telegram bot token format. Expected: 123456:ABC-DEF..."
+    fi
+  done
+
+  while true; do
+    echo -en "${CYAN}?${NC}  Your Telegram user ID (numeric, from @userinfobot): "
+    read -r TG_OWNER_ID
+    if [[ "$TG_OWNER_ID" =~ ^[0-9]+$ ]]; then
+      break
+    else
+      error "Invalid Telegram user ID: must be a number"
+    fi
+  done
+
+  # Add to .env
+  if [[ -f "$ENV_FILE" ]]; then
+    if ! grep -q "^TELEGRAM_BOT_TOKEN=" "$ENV_FILE" 2>/dev/null; then
+      echo "" >> "$ENV_FILE"
+      echo "# Telegram (added by clawdboss-upgrade $(date +%Y-%m-%d))" >> "$ENV_FILE"
+      echo "TELEGRAM_BOT_TOKEN=${TG_TOKEN}" >> "$ENV_FILE"
+      changed ".env: Added TELEGRAM_BOT_TOKEN"
+    fi
+  fi
+
+  # Add Telegram channel to config
+  CB_CONFIG="$CONFIG_FILE" CB_TG_OWNER="$TG_OWNER_ID" python3 << 'TGEOF'
+import json, os
+
+config_path = os.environ['CB_CONFIG']
+tg_owner = os.environ['CB_TG_OWNER']
+
+with open(config_path) as f:
+    config = json.load(f)
+
+config.setdefault('channels', {})['telegram'] = {
+    "enabled": True,
+    "botToken": "${TELEGRAM_BOT_TOKEN}",
+    "dmPolicy": "allowlist",
+    "allowFrom": [f"tg:{tg_owner}"],
+    "groups": {
+        "*": {"requireMention": True}
+    },
+    "replyToMode": "first",
+    "streamMode": "partial"
+}
+
+with open(config_path, 'w') as f:
+    json.dump(config, f, indent=2)
+TGEOF
+
+  changed "Telegram channel added to openclaw.json"
   echo ""
 }
 
@@ -1900,6 +2022,7 @@ main() {
   patch_workspace_files "$WORKSPACE_DIR" "Main"
   upgrade_config
   upgrade_env
+  offer_telegram
   upgrade_skills
   upgrade_tools
   upgrade_extensions
